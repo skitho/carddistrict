@@ -1,15 +1,17 @@
 {
   "name": "carddistrict-render-proxy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "catalog:sync": "node catalog/sync.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "http-proxy-middleware": "^3.0.5"
+    "http-proxy-middleware": "^3.0.5",
+    "pg": "^8.13.1"
   }
 }
