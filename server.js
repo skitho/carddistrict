@@ -49,6 +49,31 @@ async function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+async function kickoffSupabaseCatalog() {
+  const base = process.env.SUPABASE_URL || '';
+  const bulkToken = process.env.CATALOG_BULK_TOKEN || '';
+  const chainToken = process.env.CATALOG_CHAIN_TOKEN || '';
+  if (!base) return;
+  const urls = [];
+  if (bulkToken) {
+    urls.push(`${base}/functions/v1/carddistrict-bulk-provider?token=${encodeURIComponent(bulkToken)}&provider=pokemon_sets`);
+    urls.push(`${base}/functions/v1/carddistrict-bulk-provider?token=${encodeURIComponent(bulkToken)}&provider=swu`);
+  }
+  if (chainToken) {
+    for (const category of ['one_piece_card_game','disney_lorcana','magic_the_gathering','yugioh','flesh_and_blood']) {
+      urls.push(`${base}/functions/v1/carddistrict-card-chain?token=${encodeURIComponent(chainToken)}&category=${encodeURIComponent(category)}&offset=0&limit=5`);
+    }
+  }
+  if (!urls.length) return;
+  const settled = await Promise.allSettled(urls.map(async u => {
+    const r = await fetch(u, { headers: { accept: 'application/json', 'user-agent': 'CardDistrict-Render-Bootstrap/1.0' } });
+    const text = await r.text();
+    if (!r.ok) throw new Error(`${r.status} ${text.slice(0,180)}`);
+    return text.slice(0,240);
+  }));
+  console.log('Supabase catalog kickoff', settled.map(x => x.status === 'fulfilled' ? x.value : String(x.reason)));
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `https://${req.headers.host || 'carddistrict.onrender.com'}`);
   if (url.pathname === '/__carddistrict_health') return json(res, 200, { ok: true, service: 'carddistrict', upstream: TARGET, catalogDatabase: databaseConfigured() });
@@ -76,4 +101,6 @@ server.listen(PORT, '0.0.0.0', async () => {
     try { await initCatalogSchema(); console.log('CardDistrict catalog schema ready'); }
     catch (e) { console.error('CardDistrict catalog schema init failed', e); }
   }
+  try { await kickoffSupabaseCatalog(); }
+  catch (e) { console.error('Supabase catalog kickoff failed', e); }
 });
