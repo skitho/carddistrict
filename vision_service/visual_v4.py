@@ -42,11 +42,13 @@ def shortlist(req: ShortlistRequest):
     qv = descriptor(scan)
     sig = signature(qv)
     qp, qd = hashes(scan)
-    rows = candidates(sig, min(8, max(3, req.max_candidates)), req.category_key)
+    rows = candidates(sig, min(10, max(4, req.max_candidates)), req.category_key)
     out = []
     for row in rows[:req.max_candidates]:
         ss = max(0.0, min(1.0, float(row.get('signature_similarity') or 0.0)))
         out.append(public_card(dict(row), ss))
+    if out:
+        print('V4 shortlist', {'category': req.category_key or 'all', 'top': [(x['name'], x['categoryKey'], x['visualScore']) for x in out[:5]]}, flush=True)
     return {
         'verified': False,
         'identity': None,
@@ -86,8 +88,11 @@ def verify(req: VerifyRequest):
     os = orb(scan, ref)
     ss = max(0.0, min(1.0, float(row.get('signature_similarity') or 0.0)))
     score = .48 * cos + .10 * ss + .15 * ps + .05 * ds + .22 * os
-    structural = max(ps, os)
-    verified = bool(score >= .68 and (structural >= .12 or cos >= .84))
+    structural_ok = ps >= .35 or os >= .06
+    descriptor_ok = cos >= .70
+    shortlist_ok = ss >= .48 or cos >= .86
+    verified = bool(score >= .74 and descriptor_ok and structural_ok and shortlist_ok)
+    print('V4 verify', {'name': str(row.get('player') or row.get('name') or ''), 'category': str(row.get('category_key') or ''), 'score': round(score, 4), 'cos': round(cos, 4), 'shortlist': round(ss, 4), 'phash': round(ps, 4), 'dhash': round(ds, 4), 'orb': round(os, 4), 'verified': verified}, flush=True)
     return {
         'verified': verified,
         'identity': ident(row, score) if verified else None,
