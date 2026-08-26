@@ -6,4 +6,3 @@ Pillow>=10,<12
 ImageHash>=4.3,<5
 requests>=2.32,<3
 beautifulsoup4>=4.12,<5
-rapidocr-onnxruntime>=1.4,<2
