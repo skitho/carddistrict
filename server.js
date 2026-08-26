@@ -5,6 +5,19 @@ const PORT = Number(process.env.PORT || 10000);
 const TARGET = String(process.env.UPSTREAM_URL || 'https://cardscope-pro-e4rfnh.v2.appdeploy.ai').replace(/\/$/, '');
 const VISION_TARGET = String(process.env.VISION_URL || 'https://carddistrict-vision.onrender.com').replace(/\/$/, '');
 const PUBLIC_HOST = 'carddistrict.onrender.com';
+let lastVisionWarm = 0;
+
+function warmVision() {
+  const now = Date.now();
+  if (now - lastVisionWarm < 5 * 60 * 1000) return;
+  lastVisionWarm = now;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  fetch(`${VISION_TARGET}/health`, {signal: controller.signal, headers:{'user-agent':'CardDistrict-Warmup/1.0'}})
+    .then(r => console.log('CardDistrict Vision warmup', r.status))
+    .catch(e => console.warn('CardDistrict Vision warmup deferred', e.message))
+    .finally(() => clearTimeout(timer));
+}
 
 function setResponseHeaders(proxyRes, req) {
   const path = String(req.url || '').split('?')[0];
@@ -82,6 +95,7 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ok:true,service:'carddistrict-render-proxy',upstream:TARGET,vision:VISION_TARGET,scannerProxy:true}));
   }
   if (path === '/__vision_health' || path === '/api/ai-card-scan') return visionProxy(req, res);
+  if (req.method === 'GET' && (!path.includes('.') || path === '/')) warmVision();
   proxy(req, res);
 });
 
