@@ -64,6 +64,7 @@ async function kickoffSupabaseCatalog() {
       urls.push(`${base}/functions/v1/carddistrict-card-chain?token=${encodeURIComponent(chainToken)}&category=${encodeURIComponent(category)}&offset=0&limit=5`);
     }
     urls.push(`${base}/functions/v1/carddistrict-pokemon-chain?token=${encodeURIComponent(chainToken)}&offset=0&limit=4`);
+    urls.push(`${base}/functions/v1/carddistrict-media-chain?token=${encodeURIComponent(chainToken)}`);
   }
   if (!urls.length) return;
   const settled = await Promise.allSettled(urls.map(async u => {
