@@ -53,7 +53,6 @@ async function kickoffSupabaseCatalog() {
   const base = process.env.SUPABASE_URL || '';
   const bulkToken = process.env.CATALOG_BULK_TOKEN || '';
   const chainToken = process.env.CATALOG_CHAIN_TOKEN || '';
-  const pokemonToken = process.env.CATALOG_POKEMON_TOKEN || '';
   if (!base) return;
   const urls = [];
   if (bulkToken) {
@@ -64,8 +63,8 @@ async function kickoffSupabaseCatalog() {
     for (const category of ['one_piece_card_game','disney_lorcana','magic_the_gathering','yugioh','flesh_and_blood']) {
       urls.push(`${base}/functions/v1/carddistrict-card-chain?token=${encodeURIComponent(chainToken)}&category=${encodeURIComponent(category)}&offset=0&limit=5`);
     }
+    urls.push(`${base}/functions/v1/carddistrict-pokemon-chain?token=${encodeURIComponent(chainToken)}&offset=0&limit=4`);
   }
-  if (pokemonToken) urls.push(`${base}/functions/v1/carddistrict-pokemon-chain?token=${encodeURIComponent(pokemonToken)}&offset=0&limit=4`);
   if (!urls.length) return;
   const settled = await Promise.allSettled(urls.map(async u => {
     const r = await fetch(u, { headers: { accept: 'application/json', 'user-agent': 'CardDistrict-Render-Bootstrap/1.0' } });
