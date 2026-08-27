@@ -7,13 +7,13 @@ from fastapi import FastAPI, HTTPException
 from PIL import Image
 from pydantic import BaseModel, Field
 
-app=FastAPI(title='CardDistrict Recognition Engine',version='1.2.0')
+app=FastAPI(title='CardDistrict Recognition Engine',version='1.3.0')
 MODEL_PATH=Path(__file__).resolve().parent/'models'/'dinov2-small-int8.onnx'
-MODEL_ID='dinov2-small-int8-v1.2'
+MODEL_ID='dinov2-small-int8-v1.3'
 SUPABASE_URL=os.getenv('SUPABASE_URL','').rstrip('/')
 SUPABASE_KEY=os.getenv('SUPABASE_PUBLISHABLE_KEY','')
 _session:ort.InferenceSession|None=None
-HTTP=requests.Session();HTTP.headers.update({'User-Agent':'CardDistrictRecognition/1.2'})
+HTTP=requests.Session();HTTP.headers.update({'User-Agent':'CardDistrictRecognition/1.3'})
 
 class ImagePayload(BaseModel):
     data:str
@@ -115,24 +115,12 @@ def public_card(row:dict[str,Any],score:float|None=None)->dict[str,Any]:
     s=float(row.get('signature_similarity') if score is None else score or 0)
     return {'id':str(row.get('id') or ''),'name':str(row.get('player') or row.get('name') or ''),'team':str(row.get('team') or ''),'brand':str(row.get('brand') or ''),'year':str(row.get('year') or ''),'setName':str(row.get('set_name') or ''),'cardNumber':str(row.get('card_number') or ''),'insertName':str(row.get('insert_name') or ''),'parallel':str(row.get('parallel') or ''),'rookie':bool(row.get('rookie')),'categoryKey':str(row.get('category_key') or ''),'referenceImageUrl':str(row.get('reference_image_url') or ''),'sourceUrl':str(row.get('source_url') or ''),'visualScore':round(s*100,2),'verificationPayload':row}
 
-def rerank(scan:np.ndarray,sv:np.ndarray,sp:str,sd:str,rows:list[dict[str,Any]],limit:int)->list[dict[str,Any]]:
-    out=[]
-    for row0 in rows[:min(len(rows),max(6,limit))]:
-        row=dict(row0);url=str(row.get('reference_image_url') or '')
-        if not url:continue
-        try:
-            ref=download_image(url);rv=robust_embedding(ref);rp,rd=hashes(ref);cos=float(np.dot(sv,rv));ps=hsim(sp,rp);ds=hsim(sd,rd);osim,geom,good=feature_geometry(scan,ref);retr=float(row.get('signature_similarity') or 0.);score=.60*max(0.,cos)+.10*ps+.03*ds+.12*osim+.15*geom
-            row.update({'_exact_score':score,'_dinov2':cos,'_phash':ps,'_dhash':ds,'_orb':osim,'_geometry':geom,'_feature_matches':good,'_retrieval':retr})
-            out.append(row)
-        except Exception as e:row['_error']=str(e)[:160]
-    return sorted(out,key=lambda x:float(x.get('_exact_score') or 0),reverse=True)[:limit]
-
 @app.on_event('startup')
 def warm_model():
     s=session();s.run(None,{s.get_inputs()[0].name:np.zeros((1,3,224,224),np.float32)})
 
 @app.get('/health')
-def health():return {'ok':True,'engine':'CardDistrict DINOv2 Recognition v1.2','model':MODEL_ID,'retrieval':'384-bit DINOv2 HNSW + exact rerank','modelLoaded':_session is not None,'modelExists':MODEL_PATH.exists(),'supabaseConfigured':bool(SUPABASE_URL and SUPABASE_KEY),'time':now_ms()}
+def health():return {'ok':True,'engine':'CardDistrict DINOv2 Recognition v1.3','model':MODEL_ID,'retrieval':'fast 384-bit DINOv2 HNSW','verification':'full DINOv2 + pHash + ORB + homography','modelLoaded':_session is not None,'modelExists':MODEL_PATH.exists(),'supabaseConfigured':bool(SUPABASE_URL and SUPABASE_KEY),'time':now_ms()}
 
 @app.post('/fingerprint-url')
 def fingerprint_url(req:FingerprintUrlRequest):
@@ -142,12 +130,12 @@ def fingerprint_url(req:FingerprintUrlRequest):
 
 @app.post('/shortlist')
 def shortlist(req:ShortlistRequest):
-    t=time.time();scan=rectify(decode(req.front));sv=robust_embedding(scan);sp,sd=hashes(scan);rows=rpc_match_signature(signature(sv),max(30,req.max_candidates*4),req.category_key);ranked=rerank(scan,sv,sp,sd,rows,req.max_candidates);top1=float(ranked[0].get('_exact_score') or 0) if ranked else 0.;top2=float(ranked[1].get('_exact_score') or 0) if len(ranked)>1 else 0.;margin=top1-top2
+    t=time.time();scan=rectify(decode(req.front));sv=robust_embedding(scan);rows=rpc_match_signature(signature(sv),req.max_candidates,req.category_key);top1=float(rows[0].get('signature_similarity') or 0) if rows else 0.;top2=float(rows[1].get('signature_similarity') or 0) if len(rows)>1 else 0.;margin=top1-top2
     cards=[]
-    for i,row in enumerate(ranked):
-        row['_retrieval_margin']=margin if i==0 else 0.;row['_retrieval_rank']=i+1;cards.append(public_card(row,float(row.get('_exact_score') or 0)))
-    ready=bool(ranked and top1>=.74 and (len(ranked)==1 or margin>=.025))
-    return {'verified':False,'candidates':cards,'decision':{'state':'candidate_ready' if ready else 'needs_more_evidence','top1':round(top1*100,2),'top2':round(top2*100,2),'margin':round(margin*100,2),'autoVerifyEligible':ready,'failClosed':True},'engine':{'name':'CardDistrict DINOv2 retrieval v1.2','model':MODEL_ID,'ms':round((time.time()-t)*1000),'binaryCandidates':len(rows),'reranked':len(ranked)},'warning':'' if ranked else 'No indexed visual candidate yet.'}
+    for i,row0 in enumerate(rows):
+        row=dict(row0);row['_retrieval_margin']=margin if i==0 else 0.;row['_retrieval_rank']=i+1;row['_retrieval']=float(row.get('signature_similarity') or 0);cards.append(public_card(row))
+    ready=bool(rows and top1>=.58)
+    return {'verified':False,'candidates':cards,'decision':{'state':'candidate_ready' if ready else 'needs_more_evidence','top1':round(top1*100,2),'top2':round(top2*100,2),'margin':round(margin*100,2),'autoVerifyEligible':ready,'failClosed':True},'engine':{'name':'CardDistrict DINOv2 fast retrieval v1.3','model':MODEL_ID,'ms':round((time.time()-t)*1000),'binaryCandidates':len(rows)},'warning':'' if rows else 'No indexed visual candidate yet.'}
 
 @app.post('/verify')
 def verify(req:VerifyRequest):
@@ -157,11 +145,11 @@ def verify(req:VerifyRequest):
     try:ref=download_image(url)
     except Exception as e:return {'verified':False,'warning':f'reference unavailable: {e}','card':public_card(row,0),'decision':{'state':'abstain','failClosed':True}}
     rv=robust_embedding(ref);rp,rd=hashes(ref);cos=float(np.dot(sv,rv));ps=hsim(sp,rp);ds=hsim(sd,rd);osim,geom,good=feature_geometry(scan,ref);retr=float(row.get('_retrieval') or row.get('signature_similarity') or 0);margin=float(row.get('_retrieval_margin') or 0);score=.60*max(0.,cos)+.10*ps+.03*ds+.12*osim+.15*geom
-    structural=bool(geom>=.20 or (ps>=.55 and osim>=.14));deep=bool(cos>=.86);combined=bool(score>=.82);retrieval_ok=bool(retr>=.60 or cos>=.92);ambiguity_ok=bool(margin>=.02 or retr>=.84 or (cos>=.93 and geom>=.22));verified=bool(deep and combined and structural and retrieval_ok and ambiguity_ok)
+    structural=bool(geom>=.20 or (ps>=.55 and osim>=.14));deep=bool(cos>=.86);combined=bool(score>=.82);retrieval_ok=bool(retr>=.58 or cos>=.92);ambiguity_ok=bool(margin>=.015 or retr>=.84 or (cos>=.93 and geom>=.22));verified=bool(deep and combined and structural and retrieval_ok and ambiguity_ok)
     reasons=[]
     if not deep:reasons.append('deep_visual_similarity_low')
     if not combined:reasons.append('combined_exact_score_low')
     if not structural:reasons.append('structural_evidence_low')
     if not retrieval_ok:reasons.append('retrieval_confidence_low')
     if not ambiguity_ok:reasons.append('top_candidate_not_separated')
-    return {'verified':verified,'card':public_card(row,score),'identity':public_card(row,score) if verified else None,'decision':{'state':'exact_match' if verified else 'abstain','reasons':reasons,'failClosed':True},'engine':{'name':'CardDistrict DINOv2 Exact Verify v1.2','model':MODEL_ID,'score':round(score*100,2),'dinov2':round(cos*100,2),'retrieval':round(retr*100,2),'retrievalMargin':round(margin*100,2),'phash':round(ps*100,2),'dhash':round(ds*100,2),'orb':round(osim*100,2),'geometry':round(geom*100,2),'featureMatches':good,'ms':round((time.time()-t)*1000)},'warning':'' if verified else 'Not enough independent evidence for an exact match.'}
+    return {'verified':verified,'card':public_card(row,score),'identity':public_card(row,score) if verified else None,'decision':{'state':'exact_match' if verified else 'abstain','reasons':reasons,'failClosed':True},'engine':{'name':'CardDistrict DINOv2 Exact Verify v1.3','model':MODEL_ID,'score':round(score*100,2),'dinov2':round(cos*100,2),'retrieval':round(retr*100,2),'retrievalMargin':round(margin*100,2),'phash':round(ps*100,2),'dhash':round(ds*100,2),'orb':round(osim*100,2),'geometry':round(geom*100,2),'featureMatches':good,'ms':round((time.time()-t)*1000)},'warning':'' if verified else 'Not enough independent evidence for an exact match.'}
