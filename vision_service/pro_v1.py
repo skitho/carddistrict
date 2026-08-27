@@ -7,13 +7,13 @@ from fastapi import FastAPI, HTTPException
 from PIL import Image
 from pydantic import BaseModel, Field
 
-app=FastAPI(title='CardDistrict Recognition Engine',version='1.3.0')
+app=FastAPI(title='CardDistrict Recognition Engine',version='1.4.0')
 MODEL_PATH=Path(__file__).resolve().parent/'models'/'dinov2-small-int8.onnx'
-MODEL_ID='dinov2-small-int8-v1.3'
+MODEL_ID='dinov2-small-int8-v1.4'
 SUPABASE_URL=os.getenv('SUPABASE_URL','').rstrip('/')
 SUPABASE_KEY=os.getenv('SUPABASE_PUBLISHABLE_KEY','')
 _session:ort.InferenceSession|None=None
-HTTP=requests.Session();HTTP.headers.update({'User-Agent':'CardDistrictRecognition/1.3'})
+HTTP=requests.Session();HTTP.headers.update({'User-Agent':'CardDistrictRecognition/1.4'})
 
 class ImagePayload(BaseModel):
     data:str
@@ -78,10 +78,10 @@ def embed_one(card:np.ndarray)->np.ndarray:
     return v
 
 def normalize_luma(card:np.ndarray)->np.ndarray:
-    lab=cv2.cvtColor(card,cv2.COLOR_BGR2LAB);l,a,b=cv2.split(lab);l=cv2.createCLAHE(clipLimit=1.6,tileGridSize=(8,8)).apply(l);return cv2.cvtColor(cv2.merge((l,a,b)),cv2.COLOR_LAB2BGR)
+    lab=cv2.cvtColor(card,cv2.COLOR_BGR2LAB);l,a,b=cv2.split(lab);l=cv2.createCLAHE(clipLimit=1.5,tileGridSize=(8,8)).apply(l);return cv2.cvtColor(cv2.merge((l,a,b)),cv2.COLOR_LAB2BGR)
 
 def robust_embedding(card:np.ndarray)->np.ndarray:
-    v=embed_one(card)+embed_one(normalize_luma(card));return v/max(float(np.linalg.norm(v)),1e-8)
+    return embed_one(normalize_luma(card))
 
 def signature(v:np.ndarray)->str:return ''.join('1' if float(x)>=0 else '0' for x in v)
 
@@ -93,7 +93,7 @@ def hsim(a:str,b:str)->float:
     except:return 0.
 
 def feature_geometry(a:np.ndarray,b:np.ndarray)->tuple[float,float,int]:
-    ga=cv2.cvtColor(cv2.resize(a,(420,588)),cv2.COLOR_BGR2GRAY);gb=cv2.cvtColor(cv2.resize(b,(420,588)),cv2.COLOR_BGR2GRAY);orb=cv2.ORB_create(nfeatures=1800,fastThreshold=8,edgeThreshold=12);ka,da=orb.detectAndCompute(ga,None);kb,db=orb.detectAndCompute(gb,None)
+    ga=cv2.cvtColor(cv2.resize(a,(420,588)),cv2.COLOR_BGR2GRAY);gb=cv2.cvtColor(cv2.resize(b,(420,588)),cv2.COLOR_BGR2GRAY);orb=cv2.ORB_create(nfeatures=1600,fastThreshold=8,edgeThreshold=12);ka,da=orb.detectAndCompute(ga,None);kb,db=orb.detectAndCompute(gb,None)
     if da is None or db is None or len(ka)<10 or len(kb)<10:return 0.,0.,0
     raw=cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(da,db,k=2);good=[m for pair in raw if len(pair)==2 for m,n in [pair] if m.distance<.74*n.distance];orb_score=min(1.,len(good)/max(20,min(len(ka),len(kb))*.16))
     if len(good)<8:return orb_score,0.,len(good)
@@ -120,7 +120,7 @@ def warm_model():
     s=session();s.run(None,{s.get_inputs()[0].name:np.zeros((1,3,224,224),np.float32)})
 
 @app.get('/health')
-def health():return {'ok':True,'engine':'CardDistrict DINOv2 Recognition v1.3','model':MODEL_ID,'retrieval':'fast 384-bit DINOv2 HNSW','verification':'full DINOv2 + pHash + ORB + homography','modelLoaded':_session is not None,'modelExists':MODEL_PATH.exists(),'supabaseConfigured':bool(SUPABASE_URL and SUPABASE_KEY),'time':now_ms()}
+def health():return {'ok':True,'engine':'CardDistrict DINOv2 Recognition v1.4','model':MODEL_ID,'retrieval':'fast 384-bit DINOv2 HNSW','verification':'single-pass DINOv2 + pHash + ORB + homography','modelLoaded':_session is not None,'modelExists':MODEL_PATH.exists(),'supabaseConfigured':bool(SUPABASE_URL and SUPABASE_KEY),'time':now_ms()}
 
 @app.post('/fingerprint-url')
 def fingerprint_url(req:FingerprintUrlRequest):
@@ -135,7 +135,7 @@ def shortlist(req:ShortlistRequest):
     for i,row0 in enumerate(rows):
         row=dict(row0);row['_retrieval_margin']=margin if i==0 else 0.;row['_retrieval_rank']=i+1;row['_retrieval']=float(row.get('signature_similarity') or 0);cards.append(public_card(row))
     ready=bool(rows and top1>=.58)
-    return {'verified':False,'candidates':cards,'decision':{'state':'candidate_ready' if ready else 'needs_more_evidence','top1':round(top1*100,2),'top2':round(top2*100,2),'margin':round(margin*100,2),'autoVerifyEligible':ready,'failClosed':True},'engine':{'name':'CardDistrict DINOv2 fast retrieval v1.3','model':MODEL_ID,'ms':round((time.time()-t)*1000),'binaryCandidates':len(rows)},'warning':'' if rows else 'No indexed visual candidate yet.'}
+    return {'verified':False,'candidates':cards,'decision':{'state':'candidate_ready' if ready else 'needs_more_evidence','top1':round(top1*100,2),'top2':round(top2*100,2),'margin':round(margin*100,2),'autoVerifyEligible':ready,'failClosed':True},'engine':{'name':'CardDistrict DINOv2 fast retrieval v1.4','model':MODEL_ID,'ms':round((time.time()-t)*1000),'binaryCandidates':len(rows)},'warning':'' if rows else 'No indexed visual candidate yet.'}
 
 @app.post('/verify')
 def verify(req:VerifyRequest):
@@ -152,4 +152,4 @@ def verify(req:VerifyRequest):
     if not structural:reasons.append('structural_evidence_low')
     if not retrieval_ok:reasons.append('retrieval_confidence_low')
     if not ambiguity_ok:reasons.append('top_candidate_not_separated')
-    return {'verified':verified,'card':public_card(row,score),'identity':public_card(row,score) if verified else None,'decision':{'state':'exact_match' if verified else 'abstain','reasons':reasons,'failClosed':True},'engine':{'name':'CardDistrict DINOv2 Exact Verify v1.3','model':MODEL_ID,'score':round(score*100,2),'dinov2':round(cos*100,2),'retrieval':round(retr*100,2),'retrievalMargin':round(margin*100,2),'phash':round(ps*100,2),'dhash':round(ds*100,2),'orb':round(osim*100,2),'geometry':round(geom*100,2),'featureMatches':good,'ms':round((time.time()-t)*1000)},'warning':'' if verified else 'Not enough independent evidence for an exact match.'}
+    return {'verified':verified,'card':public_card(row,score),'identity':public_card(row,score) if verified else None,'decision':{'state':'exact_match' if verified else 'abstain','reasons':reasons,'failClosed':True},'engine':{'name':'CardDistrict DINOv2 Exact Verify v1.4','model':MODEL_ID,'score':round(score*100,2),'dinov2':round(cos*100,2),'retrieval':round(retr*100,2),'retrievalMargin':round(margin*100,2),'phash':round(ps*100,2),'dhash':round(ds*100,2),'orb':round(osim*100,2),'geometry':round(geom*100,2),'featureMatches':good,'ms':round((time.time()-t)*1000)},'warning':'' if verified else 'Not enough independent evidence for an exact match.'}
