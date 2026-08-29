@@ -2,7 +2,6 @@ import http from 'node:http';
 
 const PORT = Number(process.env.PORT || 10000);
 const HASH_BRIDGE_URL = String(process.env.EBAY_HASH_BRIDGE_URL || 'https://cardbrain-ebay-compliance-06nw89.v2.appdeploy.ai/api/internal/ebay-hash');
-const BRIDGE_KEY = String(process.env.EBAY_BRIDGE_KEY || '');
 const WEBHOOK_PATH = '/api/ebay/account-deletion';
 
 function sendJson(res, status, data) {
@@ -23,7 +22,6 @@ function publicEndpoint(req) {
 async function handleChallenge(req, res, url) {
   const challenge = url.searchParams.get('challenge_code') || '';
   if (!challenge) return sendJson(res, 400, { error: 'challenge_code required' });
-  if (!BRIDGE_KEY) return sendJson(res, 503, { error: 'bridge not configured' });
 
   const endpoint = publicEndpoint(req);
   const bridgeUrl = new URL(HASH_BRIDGE_URL);
@@ -37,14 +35,13 @@ async function handleChallenge(req, res, url) {
       method: 'GET',
       headers: {
         'accept': 'application/json',
-        'x-cardbrain-bridge-key': BRIDGE_KEY,
         'user-agent': 'CardBrain-eBay-Compliance/1.0'
       },
       signal: controller.signal
     });
     const text = await response.text();
     if (!response.ok) {
-      console.error('eBay hash bridge failed', response.status);
+      console.error('eBay hash bridge failed', response.status, text.slice(0, 160));
       return sendJson(res, 502, { error: 'challenge bridge failed' });
     }
     let data;
