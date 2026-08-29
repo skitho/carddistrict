@@ -149,6 +149,7 @@ wss.on('connection', ws => {
       try { ws.send(JSON.stringify({type:'pong', ts:Date.now()})); } catch {}
       return;
     }
+    if (msg?.type === 'pong') return;
     if (msg?.type !== 'response' || !inFlight || msg.id !== inFlight.id) return;
     const item = inFlight;
     clearTimeout(item.timer);
@@ -176,7 +177,7 @@ wss.on('connection', ws => {
 
 setInterval(() => {
   if (agent?.readyState === 1) {
-    try { agent.ping(); } catch {}
+    try { agent.send(JSON.stringify({type:'ping', ts:Date.now()})); } catch {}
   }
 }, 20000).unref();
 
