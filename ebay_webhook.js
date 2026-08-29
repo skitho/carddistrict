@@ -20,7 +20,15 @@ function publicEndpoint(req) {
 }
 
 async function handleChallenge(req, res, url) {
+  const started = Date.now();
   const challenge = url.searchParams.get('challenge_code') || '';
+  console.log('EBAY_VALIDATION_REQUEST', {
+    method: req.method,
+    path: url.pathname,
+    challengePresent: Boolean(challenge),
+    host: String(req.headers.host || ''),
+    userAgentPresent: Boolean(req.headers['user-agent'])
+  });
   if (!challenge) return sendJson(res, 400, { error: 'challenge_code required' });
 
   const endpoint = publicEndpoint(req);
@@ -29,28 +37,34 @@ async function handleChallenge(req, res, url) {
   bridgeUrl.searchParams.set('endpoint', endpoint);
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 9000);
+  const timer = setTimeout(() => controller.abort(), 8000);
   try {
     const response = await fetch(bridgeUrl, {
       method: 'GET',
       headers: {
         'accept': 'application/json',
-        'user-agent': 'CardBrain-eBay-Compliance/1.0'
+        'user-agent': 'CardBrain-eBay-Compliance/1.1'
       },
       signal: controller.signal
     });
     const text = await response.text();
     if (!response.ok) {
-      console.error('eBay hash bridge failed', response.status, text.slice(0, 160));
+      console.error('EBAY_VALIDATION_BRIDGE_FAILED', { status: response.status, elapsedMs: Date.now() - started });
       return sendJson(res, 502, { error: 'challenge bridge failed' });
     }
     let data;
-    try { data = JSON.parse(text); } catch { return sendJson(res, 502, { error: 'invalid bridge response' }); }
-    if (!data?.challengeResponse || typeof data.challengeResponse !== 'string') return sendJson(res, 502, { error: 'missing challengeResponse' });
-    console.log('eBay challenge served', { host: req.headers.host, endpoint });
+    try { data = JSON.parse(text); } catch {
+      console.error('EBAY_VALIDATION_BRIDGE_INVALID_JSON', { elapsedMs: Date.now() - started });
+      return sendJson(res, 502, { error: 'invalid bridge response' });
+    }
+    if (!data?.challengeResponse || typeof data.challengeResponse !== 'string') {
+      console.error('EBAY_VALIDATION_BRIDGE_MISSING_HASH', { elapsedMs: Date.now() - started });
+      return sendJson(res, 502, { error: 'missing challengeResponse' });
+    }
+    console.log('EBAY_VALIDATION_SUCCESS', { endpoint, elapsedMs: Date.now() - started });
     return sendJson(res, 200, { challengeResponse: data.challengeResponse });
   } catch (err) {
-    console.error('eBay challenge error', err?.message || String(err));
+    console.error('EBAY_VALIDATION_EXCEPTION', { message: err?.message || String(err), elapsedMs: Date.now() - started });
     return sendJson(res, 502, { error: 'challenge service unavailable' });
   } finally {
     clearTimeout(timer);
@@ -58,6 +72,7 @@ async function handleChallenge(req, res, url) {
 }
 
 async function handleNotification(req, res) {
+  console.log('EBAY_NOTIFICATION_REQUEST', { method: req.method, path: WEBHOOK_PATH });
   let bytes = 0;
   const chunks = [];
   for await (const chunk of req) {
@@ -69,12 +84,12 @@ async function handleNotification(req, res) {
   if (raw) {
     try {
       const payload = JSON.parse(raw);
-      console.log('eBay deletion notification acknowledged', {
+      console.log('EBAY_NOTIFICATION_ACK', {
         topic: payload?.metadata?.topic || null,
         notificationIdPresent: Boolean(payload?.notification?.notificationId)
       });
     } catch {
-      console.warn('eBay notification body was not JSON');
+      console.warn('EBAY_NOTIFICATION_INVALID_JSON');
     }
   }
   return sendJson(res, 200, { received: true });
@@ -84,8 +99,14 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   if (url.pathname === '/health') return sendJson(res, 200, { ok: true, service: 'cardbrain-ebay-compliance' });
   if (url.pathname === WEBHOOK_PATH && req.method === 'GET') return handleChallenge(req, res, url);
+  if (url.pathname === WEBHOOK_PATH && req.method === 'HEAD') {
+    console.log('EBAY_VALIDATION_HEAD', { path: url.pathname, host: String(req.headers.host || '') });
+    res.writeHead(204, { 'cache-control': 'no-store' });
+    return res.end();
+  }
   if (url.pathname === WEBHOOK_PATH && req.method === 'POST') return handleNotification(req, res);
   if (url.pathname === '/') return sendJson(res, 200, { ok: true, endpoint: WEBHOOK_PATH });
+  console.log('EBAY_OTHER_REQUEST', { method: req.method, path: url.pathname });
   return sendJson(res, 404, { error: 'not found' });
 });
 
