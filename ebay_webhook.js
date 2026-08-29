@@ -19,6 +19,33 @@ function publicEndpoint(req) {
   return `https://${host}${WEBHOOK_PATH}`;
 }
 
+async function inspectBridge() {
+  const bridgeUrl = new URL(HASH_BRIDGE_URL);
+  bridgeUrl.searchParams.set('challenge_code', 'cardbrain-selftest');
+  bridgeUrl.searchParams.set('endpoint', 'https://cardbrain-ebay-hook.onrender.com/api/ebay/account-deletion');
+  try {
+    const response = await fetch(bridgeUrl, { headers: { 'accept': 'application/json', 'user-agent': 'CardBrain-Bridge-SelfTest/1.0' } });
+    const text = await response.text();
+    const contentType = String(response.headers.get('content-type') || '');
+    let jsonValid = false;
+    let hasChallengeResponse = false;
+    try {
+      const parsed = JSON.parse(text);
+      jsonValid = true;
+      hasChallengeResponse = typeof parsed?.challengeResponse === 'string';
+    } catch {}
+    console.log('EBAY_BRIDGE_SELFTEST', {
+      status: response.status,
+      contentType,
+      jsonValid,
+      hasChallengeResponse,
+      responsePrefix: jsonValid ? '[json]' : text.slice(0, 80).replace(/\s+/g, ' ')
+    });
+  } catch (err) {
+    console.error('EBAY_BRIDGE_SELFTEST_EXCEPTION', { message: err?.message || String(err) });
+  }
+}
+
 async function handleChallenge(req, res, url) {
   const started = Date.now();
   const challenge = url.searchParams.get('challenge_code') || '';
@@ -43,18 +70,18 @@ async function handleChallenge(req, res, url) {
       method: 'GET',
       headers: {
         'accept': 'application/json',
-        'user-agent': 'CardBrain-eBay-Compliance/1.1'
+        'user-agent': 'CardBrain-eBay-Compliance/1.2'
       },
       signal: controller.signal
     });
     const text = await response.text();
     if (!response.ok) {
-      console.error('EBAY_VALIDATION_BRIDGE_FAILED', { status: response.status, elapsedMs: Date.now() - started });
+      console.error('EBAY_VALIDATION_BRIDGE_FAILED', { status: response.status, contentType: response.headers.get('content-type') || '', elapsedMs: Date.now() - started });
       return sendJson(res, 502, { error: 'challenge bridge failed' });
     }
     let data;
     try { data = JSON.parse(text); } catch {
-      console.error('EBAY_VALIDATION_BRIDGE_INVALID_JSON', { elapsedMs: Date.now() - started });
+      console.error('EBAY_VALIDATION_BRIDGE_INVALID_JSON', { status: response.status, contentType: response.headers.get('content-type') || '', elapsedMs: Date.now() - started, responsePrefix: text.slice(0, 80).replace(/\s+/g, ' ') });
       return sendJson(res, 502, { error: 'invalid bridge response' });
     }
     if (!data?.challengeResponse || typeof data.challengeResponse !== 'string') {
@@ -113,4 +140,7 @@ const server = http.createServer(async (req, res) => {
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
 server.requestTimeout = 30000;
-server.listen(PORT, '0.0.0.0', () => console.log(`CardBrain eBay compliance listening on ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`CardBrain eBay compliance listening on ${PORT}`);
+  inspectBridge();
+});
